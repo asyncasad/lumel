@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Table,
   TableBody,
@@ -14,7 +14,6 @@ import {
   flexRender,
   getCoreRowModel,
   useReactTable,
-  ExpandedState,
   getExpandedRowModel,
 } from '@tanstack/react-table';
 
@@ -26,6 +25,7 @@ interface RowData {
   originalValue?: number;
   variance?: number;
   depth?: number;
+  _inputValue?: string;
 }
 
 const initialData: RowData[] = [
@@ -71,10 +71,30 @@ const initialData: RowData[] = [
   },
 ];
 
+const EditableCell = ({ getValue, row, column, table }: { getValue: () => any, row: any, column: any, table: any }) => {
+  const initialValue = getValue();
+  const [value, setValue] = useState(initialValue?.toString() || '');
+
+  const onBlur = () => {
+    table.options.meta?.updateData(row.index, column.id, value);
+  };
+
+  useEffect(() => {
+    setValue(initialValue?.toString() || '');
+  }, [initialValue]);
+
+  return (
+    <Input
+      value={value}
+      onChange={(e) => setValue(e.target.value)}
+      onBlur={onBlur}
+      className="w-24"
+    />
+  );
+};
+
 const InfoTable = () => {
   const [data, setData] = useState<RowData[]>(initialData);
-  const [expanded, setExpanded] = useState<ExpandedState>({});
-  const [inputValues, setInputValues] = useState<Record<string, string>>({});
 
   const flattenRows = (rows: RowData[], depth = 0): RowData[] => {
     return rows.flatMap((row) => {
@@ -124,7 +144,80 @@ const InfoTable = () => {
     };
   };
 
-  const updateRowValue = (rowId: string, newValue: number, isPercentage: boolean) => {
+  const columns = useMemo(
+    () => [
+      {
+        accessorKey: 'label',
+        header: 'Label',
+        cell: ({ row }: { row: any }) => (
+          <div style={{ paddingLeft: `${row.original.depth * 20}px` }}>
+            {row.original.children ? '▶ ' : ''}{row.original.label}
+          </div>
+        ),
+      },
+      {
+        accessorKey: 'value',
+        header: 'Value',
+        cell: ({ row }: { row: any }) => row.original.value.toFixed(2),
+      },
+      {
+        id: 'input',
+        header: 'Input',
+        cell: EditableCell,
+      },
+      {
+        id: 'allocationPercent',
+        header: 'Allocation %',
+        cell: ({ row, table }: { row: any, table: any }) => (
+          <Button
+            onClick={() => {
+              const inputValue = row.original._inputValue;
+              if (inputValue) {
+                const value = parseFloat(inputValue);
+                if (!isNaN(value)) {
+                  table.options.meta?.updateRowWithPercent(row.index, value);
+                }
+              }
+            }}
+          >
+            Apply %
+          </Button>
+        ),
+      },
+      {
+        id: 'allocationValue',
+        header: 'Allocation Val',
+        cell: ({ row, table }) => (
+          <Button
+            onClick={() => {
+              const inputValue = row.original._inputValue;
+              if (inputValue) {
+                const value = parseFloat(inputValue);
+                if (!isNaN(value)) {
+                  table.options.meta?.updateRowWithValue(row.index, value);
+                }
+              }
+            }}
+          >
+            Apply Value
+          </Button>
+        ),
+      },
+      {
+        accessorKey: 'variance',
+        header: 'Variance %',
+        cell: ({ row }: { row: any }) => (row.original.variance || 0).toFixed(2) + '%',
+      },
+    ],
+    []
+  );
+
+  const flattenedData = useMemo(() => flattenRows(data), [data]);
+
+  const updateRowValue = (rowIndex: number, newValue: number, isPercentage: boolean) => {
+    const flatRow = flattenedData[rowIndex];
+    const rowId = flatRow.id;
+    
     const updateRow = (rows: RowData[]): RowData[] => {
       return rows.map(row => {
         if (row.id === rowId) {
@@ -156,89 +249,65 @@ const InfoTable = () => {
     setData(updateParentValues(updatedData));
   };
 
-  const columns = useMemo(
-    () => [
-      {
-        accessorKey: 'label',
-        header: 'Label',
-        cell: ({ row }: { row: any }) => (
-          <div style={{ paddingLeft: `${row.original.depth * 20}px` }}>
-            {row.original.children ? '▶ ' : ''}{row.original.label}
-          </div>
-        ),
-      },
-      {
-        accessorKey: 'value',
-        header: 'Value',
-        cell: ({ row }: { row: any }) => row.original.value.toFixed(2),
-      },
-      {
-        id: 'input',
-        header: 'Input',
-        cell: ({ row }: { row: any }) => (
-          <Input
-            value={inputValues[row.original.id] || ''}
-            onChange={(e) => setInputValues({
-              ...inputValues,
-              [row.original.id]: e.target.value,
-            })}
-            className="w-24"
-          />
-        ),
-      },
-      {
-        id: 'allocationPercent',
-        header: 'Allocation %',
-        cell: ({ row }: { row: any }) => (
-          <Button
-            onClick={() => {
-              const value = parseFloat(inputValues[row.original.id] || '0');
-              if (!isNaN(value)) {
-                updateRowValue(row.original.id, value, true);
-              }
-            }}
-          >
-            Apply %
-          </Button>
-        ),
-      },
-      {
-        id: 'allocationValue',
-        header: 'Allocation Val',
-        cell: ({ row }) => (
-          <Button
-            onClick={() => {
-              const value = parseFloat(inputValues[row.original.id] || '0');
-              if (!isNaN(value)) {
-                updateRowValue(row.original.id, value, false);
-              }
-            }}
-          >
-            Apply Value
-          </Button>
-        ),
-      },
-      {
-        accessorKey: 'variance',
-        header: 'Variance %',
-        cell: ({ row }) => (row.original.variance || 0).toFixed(2) + '%',
-      },
-    ],
-    [inputValues]
-  );
-
-  const flattenedData = useMemo(() => flattenRows(data), [data]);
-
   const table = useReactTable({
     data: flattenedData,
     columns,
-    state: {
-      expanded,
-    },
-    onExpandedChange: setExpanded,
     getExpandedRowModel: getExpandedRowModel(),
     getCoreRowModel: getCoreRowModel(),
+    meta: {
+      updateData: (rowIndex: number, columnId: string, value: any) => {
+        setData(old => {
+          const newData = JSON.parse(JSON.stringify(flattenRows(old)));
+          newData[rowIndex] = {
+            ...newData[rowIndex],
+            _inputValue: value, 
+          };
+          
+          return updateParentValues(
+            old.map((row) => { 
+              if (flattenedData[rowIndex].id === row.id) {
+                return {
+                  ...row,
+                  _inputValue: value,
+                };
+              }
+              if (row.children) {
+                return {
+                  ...row,
+                  children: updateChildrenInputValue(row.children, flattenedData[rowIndex].id, value),
+                };
+              }
+              return row;
+            })
+          );
+        });
+      },
+      updateRowWithPercent: (rowIndex: number, percentValue: number) => {
+        updateRowValue(rowIndex, percentValue, true);
+      },
+      updateRowWithValue: (rowIndex: number, value: number) => {
+        updateRowValue(rowIndex, value, false);
+      }
+    },
   });
+
+  const updateChildrenInputValue = (children: RowData[], targetId: string, value: string): RowData[] => {
+    return children.map(child => {
+      if (child.id === targetId) {
+        return {
+          ...child,
+          _inputValue: value,
+        };
+      }
+      if (child.children) {
+        return {
+          ...child,
+          children: updateChildrenInputValue(child.children, targetId, value),
+        };
+      }
+      return child;
+    });
+  };
 
   const grandTotal = useMemo(() => 
     data.reduce((sum, row) => sum + row.value, 0),
